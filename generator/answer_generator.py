@@ -1,9 +1,11 @@
+import json
 import ollama
 
 from rag.retriever import retrieve
 
 
 MODEL = "qwen2.5:3b"
+OUTPUT_PATH = "data/outputs/rag_output.json"
 
 
 def generate_answer(question):
@@ -42,6 +44,26 @@ Answer:
     return documents, response["message"]["content"]
 
 
+def save_output(question, documents, answer):
+    output = {
+        "question": question,
+        "retrieved_evidence": [
+            {
+                "id": i,
+                "text": document.page_content,
+                "page": document.metadata.get("page", None)
+            }
+            for i, document in enumerate(documents, start=1)
+        ],
+        "generated_answer": answer
+    }
+
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as file:
+        json.dump(output, file, indent=4, ensure_ascii=False)
+
+    print(f"\nOutput saved to {OUTPUT_PATH}")
+
+
 if __name__ == "__main__":
     question = input("Enter your question: ")
 
@@ -57,3 +79,5 @@ if __name__ == "__main__":
 
     print("\nGenerated Answer:\n")
     print(answer)
+
+    save_output(question, documents, answer)
