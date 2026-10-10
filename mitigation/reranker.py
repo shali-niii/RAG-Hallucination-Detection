@@ -1,67 +1,130 @@
-# Evidence Reranking for Hallucination Mitigation
+```python
+"""
+Evidence Reranking for RAG Hallucination Mitigation
 
-## 1. Overview
+Purpose:
+    Reorder retrieved evidence passages according to their relevance
+    to a user's question.
 
-Evidence reranking is a technique used in Retrieval-Augmented Generation (RAG) systems to improve the relevance of retrieved documents before generating an answer.
+Model:
+    cross-encoder/ms-marco-MiniLM-L-6-v2
 
-A RAG system retrieves passages from a knowledge source and provides them to a language model. However, the initial retrieval results may contain irrelevant or less useful passages. If the model relies on weak evidence, it may generate unsupported claims.
+Note:
+    This component ranks evidence by relevance. It does not independently
+    determine whether evidence is factually correct or supports a claim.
+"""
 
-Evidence reranking reorders the retrieved passages so that the most relevant passages appear first.
+from typing import Any, Dict, List
 
-## 2. Objective
+from sentence_transformers import CrossEncoder
 
-The objective is to improve the quality of evidence provided to the language model and reduce claims that are unsupported by the retrieved evidence.
 
-## 3. How It Works
+DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-1. The user submits a question.
-2. The retrieval system finds potentially relevant passages.
-3. A reranking method scores the retrieved passages based on their relevance to the question.
-4. The passages are reordered by their reranking scores.
-5. The highest-ranked passages are passed to the language model.
-6. The generated answer is evaluated against the evidence.
 
-## 4. Example
+class EvidenceReranker:
+    """Rank retrieved evidence passages for a given question."""
 
-**Question:** What is the main function of the human heart?
+    def __init__(self, model_name: str = DEFAULT_MODEL):
+        """Initialize the cross-encoder relevance model."""
+        self.model = CrossEncoder(model_name)
 
-**Retrieved passage A:** The heart pumps blood throughout the body.
+    def rerank(
+        self,
+        question: str,
+        evidence: List[Dict[str, Any]],
+        top_k: int = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Rank evidence passages by relevance to a question.
 
-**Retrieved passage B:** The human stomach helps digest food.
+        Args:
+            question: The user's question.
+            evidence: List of dictionaries containing a 'text' field.
+            top_k: Maximum number of passages to return.
+                   If None, return all passages.
 
-For this question, passage A is more relevant than passage B. A reranking method should place passage A first.
+        Returns:
+            Evidence dictionaries sorted by descending relevance score.
+            Original fields are preserved, and 'rerank_score' is added.
+        """
+        if not question or not question.strip():
+            raise ValueError("Question must not be empty.")
 
-This example illustrates relevance ranking; it does not demonstrate an experimentally measured reduction in hallucinations.
+        if top_k is not None and top_k < 0:
+            raise ValueError("top_k must be zero or greater.")
 
-## 5. Expected Benefits
+        if not evidence:
+            return []
 
-* Places more relevant evidence near the beginning of the context.
-* Reduces the influence of irrelevant retrieved passages.
-* May improve the factual grounding of generated answers.
-* Provides a method that can be compared with baseline RAG.
+        for index, passage in enumerate(evidence):
+            if not isinstance(passage, dict):
+                raise TypeError(
+                    f"Evidence item {index} must be a dictionary."
+                )
 
-## 6. Limitations
+            if not isinstance(passage.get("text"), str):
+                raise ValueError(
+                    f"Evidence item {index} must contain a string 'text' field."
+                )
 
-* Reranking cannot create evidence that was never retrieved.
-* A highly ranked passage may still be incorrect or insufficient.
-* Better retrieval relevance does not guarantee a truthful answer.
-* Reranking may increase processing time.
+        if top_k == 0:
+            return []
 
-## 7. Evaluation
+        pairs = [
+            (question, passage["text"])
+            for passage in evidence
+        ]
 
-Compare the baseline RAG system with the reranked system using the same test questions.
+        scores = self.model.predict(pairs)
 
-Measure:
+        ranked_evidence = []
 
-* Claim support rate.
-* Unsupported claim rate.
-* Contradiction rate.
-* Answer quality.
+        for passage, score in zip(evidence, scores):
+            ranked_passage = dict(passage)
+            ranked_passage["rerank_score"] = float(score)
+            ranked_evidence.append(ranked_passage)
 
-Use the same metric definitions for both systems. Report actual results only after running the experiments.
+        ranked_evidence.sort(
+            key=lambda item: item["rerank_score"],
+            reverse=True,
+        )
 
-## 8. Integration With the Project
+        if top_k is not None:
+            ranked_evidence = ranked_evidence[:top_k]
 
-The reranking method should operate on the passages returned by the team's retrieval component. Its output should be passed to the RAG generation component.
+        return ranked_evidence
 
-The implementation should follow the data format agreed upon by the team.
+
+if __name__ == "__main__":
+    # Example input for a basic manual test.
+    question = "Why does water boil at a lower temperature at high altitudes?"
+
+    sample_evidence = [
+        {
+            "id": "E1",
+            "text": "Water boils at a lower temperature when atmospheric pressure decreases.",
+            "source": "example_document_1",
+        },
+        {
+            "id": "E2",
+            "text": "Mountain environments can have different vegetation and climates.",
+            "source": "example_document_2",
+        },
+        {
+            "id": "E3",
+            "text": "Atmospheric pressure generally decreases as altitude increases.",
+            "source": "example_document_3",
+        },
+    ]
+
+    reranker = EvidenceReranker()
+    results = reranker.rerank(question, sample_evidence, top_k=3)
+
+    for item in results:
+        print(f"ID: {item['id']}")
+        print(f"Score: {item['rerank_score']:.4f}")
+        print(f"Evidence: {item['text']}")
+        print(f"Source: {item['source']}")
+        print("-" * 50)
+```
